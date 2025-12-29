@@ -17,7 +17,7 @@ const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 200, keepAliveMs
 const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 200, keepAliveMsecs: 30000 });
 
 // =========================
-// ORIGINS
+// ORIGINS (replace with working ones)
 // =========================
 const ORIGINS = [
   "http://143.44.136.67:6060",
@@ -54,7 +54,7 @@ function rotateOrigin(session) {
   session.originIndex = (session.originIndex + 1) % ORIGINS.length;
 }
 
-// cleanup idle sessions (30 min)
+// Cleanup idle sessions (30 min)
 setInterval(() => {
   const now = Date.now();
   for (const [id, session] of channelSessions) {
@@ -71,7 +71,7 @@ async function fetchSticky(urlBuilder, req, session) {
     const url = urlBuilder(origin);
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 12000);
+    const timeout = setTimeout(() => controller.abort(), 15000);
 
     try {
       const res = await fetch(url, {
@@ -103,9 +103,7 @@ async function fetchSticky(urlBuilder, req, session) {
 // =========================
 // HOME
 // =========================
-app.get("/", (_, res) => {
-  res.send("Proxy running, ready to stream!");
-});
+app.get("/", (_, res) => res.send("Streaming proxy is running!"));
 
 // =========================
 // DASH / HLS / SEGMENT PROXY
@@ -134,18 +132,15 @@ app.get("/:channelId/*", async (req, res) => {
   try {
     const { res: upstream, controller } = await fetchSticky(origin => {
       const base = `${origin}/001/2/ch0000009099000000${channelId}/`;
-      return path.includes("?")
-        ? `${base}${path}&${authParams}`
-        : `${base}${path}?${authParams}`;
+      return path.includes("?") ? `${base}${path}&${authParams}` : `${base}${path}?${authParams}`;
     }, req, session);
 
-    // =========================
-    // MPD DASH
-    // =========================
+    // -------------------------
+    // DASH MPD
+    // -------------------------
     if (path.endsWith(".mpd")) {
       let mpd = await upstream.text();
       const proxyBase = `${req.protocol}://${req.get("host")}/${channelId}/`;
-
       mpd = mpd.replace(/<BaseURL>.*?<\/BaseURL>/gs, "");
       mpd = mpd.replace(/<MPD([^>]*)>/, `<MPD$1><BaseURL>${proxyBase}</BaseURL>`);
 
@@ -158,9 +153,9 @@ app.get("/:channelId/*", async (req, res) => {
       return res.send(mpd);
     }
 
-    // =========================
+    // -------------------------
     // HLS M3U8
-    // =========================
+    // -------------------------
     if (path.endsWith(".m3u8")) {
       let playlist = await upstream.text();
       const proxyBase = `${req.protocol}://${req.get("host")}/${channelId}/`;
@@ -175,9 +170,9 @@ app.get("/:channelId/*", async (req, res) => {
       return res.send(playlist);
     }
 
-    // =========================
+    // -------------------------
     // SEGMENT STREAMING
-    // =========================
+    // -------------------------
     res.set({
       "Content-Type": upstream.headers.get("content-type") || "application/octet-stream",
       "Cache-Control": "no-store",
@@ -189,7 +184,7 @@ app.get("/:channelId/*", async (req, res) => {
     proxyStream.pipe(res);
 
     let lastChunk = Date.now();
-    const STALL_LIMIT = 5000;
+    const STALL_LIMIT = 5000; // 5s stall
 
     const stallTimer = setInterval(() => {
       if (Date.now() - lastChunk > STALL_LIMIT) {
@@ -200,7 +195,6 @@ app.get("/:channelId/*", async (req, res) => {
     }, 500);
 
     const reader = upstream.body.getReader();
-
     (async () => {
       try {
         while (true) {
