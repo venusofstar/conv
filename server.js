@@ -25,12 +25,10 @@ const ORIGINS = [
   "http://136.239.158.18:6610",
   "http://136.239.158.20:6610",
   "http://136.239.158.30:6610",
-   "http://136.239.159.20:6610",
+  "http://136.239.159.20:6610",
   "http://136.239.173.3:6610",
   "http://136.239.173.10:6610",
   "http://136.158.97.2:6610"
-
-
 ];
 
 // =========================
@@ -39,7 +37,6 @@ const ORIGINS = [
 const channelSessions = new Map();
 
 function createSession(channelId) {
-  // ztecid fixed per channelId
   const ztecid = `ch0000009099000000${channelId}`;
 
   const session = {
@@ -47,12 +44,14 @@ function createSession(channelId) {
     startNumber: 46489952 + Math.floor(Math.random() * 100000) * 6,
     IAS: "RR" + Date.now() + Math.random().toString(36).slice(2, 10),
     userSession: Math.floor(Math.random() * 1e15).toString(),
-    ztecid, // fixed
-    timer: null
+    ztecid,
+    lastChunk: Date.now(),
+    stallTimer: null,
+    rotateTimer: null
   };
 
   // ⏱ Rotate origin every 1000ms
-  session.timer = setInterval(() => {
+  session.rotateTimer = setInterval(() => {
     session.originIndex = (session.originIndex + 1) % ORIGINS.length;
   }, 1000);
 
@@ -60,9 +59,14 @@ function createSession(channelId) {
 }
 
 function clearSession(session) {
-  if (session?.timer) {
-    clearInterval(session.timer);
-    session.timer = null;
+  if (!session) return;
+  if (session.rotateTimer) {
+    clearInterval(session.rotateTimer);
+    session.rotateTimer = null;
+  }
+  if (session.stallTimer) {
+    clearInterval(session.stallTimer);
+    session.stallTimer = null;
   }
 }
 
@@ -156,7 +160,7 @@ app.get("/:channelId/*", async (req, res) => {
 
   try {
     const upstream = await fetchSticky(origin => {
-      const base = `${origin}/001/2/${session.ztecid}/`; // always same ztecid per channel
+      const base = `${origin}/001/2/${session.ztecid}/`;
       return path.includes("?")
         ? `${base}${path}&${authParams}`
         : `${base}${path}?${authParams}`;
@@ -197,24 +201,26 @@ app.get("/:channelId/*", async (req, res) => {
     const proxyStream = new PassThrough();
     proxyStream.pipe(res);
 
-    let lastChunk = Date.now();
+    // Stall detection
+    session.lastChunk = Date.now();
     const STALL_LIMIT = 3000;
 
-    const stallTimer = setInterval(() => {
-      if (Date.now() - lastChunk > STALL_LIMIT) {
-        console.warn("⚠️ Segment stall detected, rotating origin...");
-        session.originIndex = (session.originIndex + 1) % ORIGINS.length;
-        upstream.body.destroy();
-      }
-    }, 500);
+    if (!session.stallTimer) {
+      session.stallTimer = setInterval(() => {
+        if (Date.now() - session.lastChunk > STALL_LIMIT) {
+          console.warn("⚠️ Segment stall detected, rotating origin...");
+          session.originIndex = (session.originIndex + 1) % ORIGINS.length;
+          upstream.body.destroy();
+        }
+      }, 500);
+    }
 
     upstream.body.on("data", chunk => {
-      lastChunk = Date.now();
+      session.lastChunk = Date.now();
       proxyStream.write(chunk);
     });
 
     upstream.body.on("end", () => {
-      clearInterval(stallTimer);
       proxyStream.end();
     });
 
