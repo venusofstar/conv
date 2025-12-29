@@ -3,12 +3,14 @@ const cors = require("cors");
 const fetch = require("node-fetch");
 const http = require("http");
 const https = require("https");
+const { PassThrough } = require("stream");
 const crypto = require("crypto");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
+app.use(express.raw({ type: "*/*" }));
 
 // =========================
 // KEEP-ALIVE AGENTS
@@ -34,58 +36,53 @@ const ORIGINS = [
 ];
 
 // =========================
-// AUTHINFO GENERATOR
+// PER-CHANNEL SESSION
 // =========================
+const channelSessions = new Map();
+
 function generateAuthInfo() {
+  // 32 bytes → base64 → url encoded (same pattern as sample)
   return encodeURIComponent(
-    crypto.randomBytes(64).toString("base64")
+    crypto.randomBytes(32).toString("base64")
   );
 }
 
-// =========================
-// PER-CHANNEL SESSION
-// =========================
-const sessions = new Map();
-
-function createSession(channelId) {
+function createSession() {
   return {
     originIndex: Math.floor(Math.random() * ORIGINS.length),
-    startNumber: 46489952 + Math.floor(Math.random() * 100000),
+    startNumber: 46489952 + Math.floor(Math.random() * 100000) * 6,
     IAS: "RR" + Date.now() + Math.random().toString(36).slice(2, 10),
     userSession: Math.floor(Math.random() * 1e15).toString(),
-    ztecid: `ch0000009099000000${channelId}`,
-    authInfo: generateAuthInfo()
+    authInfo: generateAuthInfo() // ✅ generated once per channel
   };
 }
 
 function getSession(channelId) {
-  if (!sessions.has(channelId)) {
-    sessions.set(channelId, createSession(channelId));
+  if (!channelSessions.has(channelId)) {
+    channelSessions.set(channelId, createSession());
   }
-  return sessions.get(channelId);
+  return channelSessions.get(channelId);
 }
 
-// =========================
-// ROTATION (FAILURE ONLY)
-// =========================
 function rotateOrigin(session) {
   session.originIndex = (session.originIndex + 1) % ORIGINS.length;
-  session.startNumber += 6;          // avoid segment repeat
-  session.authInfo = generateAuthInfo(); // rotate AuthInfo
 }
 
-// cleanup every 10 minutes
-setInterval(() => sessions.clear(), 10 * 60 * 1000);
+// cleanup every 10 min
+setInterval(() => channelSessions.clear(), 10 * 60 * 1000);
 
 // =========================
-// FETCH WITH FAILOVER
+// FETCH WITH STICKY ORIGIN
 // =========================
-async function fetchWithFailover(urlBuilder, req, session) {
-  for (let i = 0; i < ORIGINS.length; i++) {
+async function fetchSticky(urlBuilder, req, session) {
+  for (let attempt = 0; attempt < ORIGINS.length; attempt++) {
     const origin = ORIGINS[session.originIndex];
     const url = urlBuilder(origin);
 
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 12000);
+
       const res = await fetch(url, {
         agent: url.startsWith("https") ? httpsAgent : httpAgent,
         headers: {
@@ -93,17 +90,21 @@ async function fetchWithFailover(urlBuilder, req, session) {
           "Accept": "*/*",
           "Connection": "keep-alive"
         },
-        timeout: 12000
+        signal: controller.signal
       });
+
+      clearTimeout(timeout);
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res;
 
-    } catch (e) {
-      console.warn("⚠️ Origin failed:", origin);
+    } catch (err) {
+      console.error("⚠️ Origin failed:", ORIGINS[session.originIndex]);
       rotateOrigin(session);
+      await new Promise(r => setTimeout(r, 200));
     }
   }
+
   throw new Error("All origins failed");
 }
 
@@ -111,7 +112,7 @@ async function fetchWithFailover(urlBuilder, req, session) {
 // HOME
 // =========================
 app.get("/", (_, res) => {
-  res.send("✅ DASH Proxy – AuthInfo Auto / Stable / No Repeat");
+  res.send("✅ DASH Proxy Running");
 });
 
 // =========================
@@ -122,7 +123,9 @@ app.get("/:channelId/*", async (req, res) => {
   const path = req.params[0];
   const session = getSession(channelId);
 
-  const auth =
+  const ztecid = `ch0000009099000000${channelId}`;
+
+  const authParams =
     `JITPDRMType=Widevine` +
     `&virtualDomain=001.live_hls.zte.com` +
     `&m4s_min=1` +
@@ -133,18 +136,20 @@ app.get("/:channelId/*", async (req, res) => {
     `&ispcode=55` +
     `&IASHttpSessionId=${session.IAS}` +
     `&usersessionid=${session.userSession}` +
-    `&ztecid=${session.ztecid}` +
-    `&AuthInfo=${session.authInfo}`;
+    `&ztecid=${ztecid}` +
+    `&AuthInfo=${session.authInfo}`; // ✅ AUTO GENERATED
 
   try {
-    const upstream = await fetchWithFailover(origin => {
-      const base = `${origin}/001/2/ch0000009099000000${channelId}/`;
+    const upstream = await fetchSticky(origin => {
+      const base = `${origin}/001/2/${ztecid}/`;
       return path.includes("?")
-        ? `${base}${path}&${auth}`
-        : `${base}${path}?${auth}`;
+        ? `${base}${path}&${authParams}`
+        : `${base}${path}?${authParams}`;
     }, req, session);
 
-    // ===== MPD =====
+    // =========================
+    // MPD
+    // =========================
     if (path.endsWith(".mpd")) {
       let mpd = await upstream.text();
       const proxyBase = `${req.protocol}://${req.get("host")}/${channelId}/`;
@@ -157,27 +162,32 @@ app.get("/:channelId/*", async (req, res) => {
 
       res.set({
         "Content-Type": "application/dash+xml",
-        "Cache-Control": "no-store"
+        "Cache-Control": "no-store",
+        "Access-Control-Allow-Origin": "*"
       });
 
       return res.send(mpd);
     }
 
-    // ===== SEGMENTS =====
+    // =========================
+    // SEGMENTS
+    // =========================
     res.set({
       "Content-Type": "video/mp4",
-      "Cache-Control": "no-store"
+      "Cache-Control": "no-store",
+      "Access-Control-Allow-Origin": "*",
+      "Connection": "keep-alive"
     });
 
-    upstream.body.pipe(res);
+    const stream = new PassThrough();
+    stream.pipe(res);
 
-    upstream.body.on("error", () => {
-      rotateOrigin(session);
-      res.destroy();
-    });
+    upstream.body.on("data", chunk => stream.write(chunk));
+    upstream.body.on("end", () => stream.end());
+    upstream.body.on("error", () => stream.end());
 
-  } catch (e) {
-    console.error("❌ Proxy error:", e.message);
+  } catch (err) {
+    console.error("❌ Proxy error:", err.message);
     res.status(502).end();
   }
 });
