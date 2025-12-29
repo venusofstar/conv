@@ -13,17 +13,8 @@ app.use(express.raw({ type: "*/*" }));
 // =========================
 // KEEP-ALIVE AGENTS
 // =========================
-const httpAgent = new http.Agent({
-  keepAlive: true,
-  maxSockets: 200,
-  keepAliveMsecs: 30000
-});
-
-const httpsAgent = new https.Agent({
-  keepAlive: true,
-  maxSockets: 200,
-  keepAliveMsecs: 30000
-});
+const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 200, keepAliveMsecs: 30000 });
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 200, keepAliveMsecs: 30000 });
 
 // =========================
 // ORIGINS
@@ -67,9 +58,7 @@ function rotateOrigin(session) {
 setInterval(() => {
   const now = Date.now();
   for (const [id, session] of channelSessions) {
-    if (now - session.lastUsed > 30 * 60 * 1000) {
-      channelSessions.delete(id);
-    }
+    if (now - session.lastUsed > 30 * 60 * 1000) channelSessions.delete(id);
   }
 }, 5 * 60 * 1000);
 
@@ -115,19 +104,17 @@ async function fetchSticky(urlBuilder, req, session) {
 // HOME
 // =========================
 app.get("/", (_, res) => {
-  res.send("Enjoy your life");
+  res.send("Proxy running, ready to stream!");
 });
 
 // =========================
-// DASH / SEGMENT PROXY
+// DASH / HLS / SEGMENT PROXY
 // =========================
 app.get("/:channelId/*", async (req, res) => {
   const { channelId } = req.params;
   const path = req.params[0];
 
-  if (!/^\d+$/.test(channelId) || path.includes("..")) {
-    return res.status(400).end();
-  }
+  if (!/^\d+$/.test(channelId) || path.includes("..")) return res.status(400).end();
 
   const session = getSession(channelId);
 
@@ -153,17 +140,14 @@ app.get("/:channelId/*", async (req, res) => {
     }, req, session);
 
     // =========================
-    // MPD REWRITE
+    // MPD DASH
     // =========================
     if (path.endsWith(".mpd")) {
       let mpd = await upstream.text();
       const proxyBase = `${req.protocol}://${req.get("host")}/${channelId}/`;
 
       mpd = mpd.replace(/<BaseURL>.*?<\/BaseURL>/gs, "");
-      mpd = mpd.replace(
-        /<MPD([^>]*)>/,
-        `<MPD$1><BaseURL>${proxyBase}</BaseURL>`
-      );
+      mpd = mpd.replace(/<MPD([^>]*)>/, `<MPD$1><BaseURL>${proxyBase}</BaseURL>`);
 
       res.set({
         "Content-Type": "application/dash+xml",
@@ -172,6 +156,23 @@ app.get("/:channelId/*", async (req, res) => {
       });
 
       return res.send(mpd);
+    }
+
+    // =========================
+    // HLS M3U8
+    // =========================
+    if (path.endsWith(".m3u8")) {
+      let playlist = await upstream.text();
+      const proxyBase = `${req.protocol}://${req.get("host")}/${channelId}/`;
+      playlist = playlist.replace(/(http.*?\/)/g, proxyBase);
+
+      res.set({
+        "Content-Type": "application/vnd.apple.mpegurl",
+        "Cache-Control": "no-store",
+        "Access-Control-Allow-Origin": "*"
+      });
+
+      return res.send(playlist);
     }
 
     // =========================
@@ -188,11 +189,11 @@ app.get("/:channelId/*", async (req, res) => {
     proxyStream.pipe(res);
 
     let lastChunk = Date.now();
-    const STALL_LIMIT = 3000;
+    const STALL_LIMIT = 5000;
 
     const stallTimer = setInterval(() => {
       if (Date.now() - lastChunk > STALL_LIMIT) {
-        console.warn("⚠️ Stall detected, rotating origin");
+        console.warn("⚠️ Stall detected, rotating origin...");
         rotateOrigin(session);
         controller.abort();
       }
@@ -225,6 +226,4 @@ app.get("/:channelId/*", async (req, res) => {
 // =========================
 // START SERVER
 // =========================
-app.listen(PORT, () => {
-  console.log(`✅ DASH/HLS proxy running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`✅ Streaming proxy running on port ${PORT}`));
