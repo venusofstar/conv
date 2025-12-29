@@ -14,8 +14,17 @@ app.use(express.raw({ type: "*/*" }));
 // =========================
 // KEEP-ALIVE AGENTS
 // =========================
-const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 200, keepAliveMsecs: 30000 });
-const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 200, keepAliveMsecs: 30000 });
+const httpAgent = new http.Agent({
+  keepAlive: true,
+  maxSockets: 200,
+  keepAliveMsecs: 30000
+});
+
+const httpsAgent = new https.Agent({
+  keepAlive: true,
+  maxSockets: 200,
+  keepAliveMsecs: 30000
+});
 
 // =========================
 // ORIGINS
@@ -31,15 +40,20 @@ const ORIGINS = [
 const channelSessions = new Map();
 
 function createSession(channelId) {
-  // Auto-generate ztecid per channelId
-  const ztecid = `ch0000009099000000${channelId}${Math.floor(Math.random() * 9000 + 1000)}`;
-
   return {
     originIndex: Math.floor(Math.random() * ORIGINS.length),
-    startNumber: 46489952 + Math.floor(Math.random() * 100000) * 6,
+
+    // Base live startNumber (will start counting on playback)
+    startNumber: 46489952,
+
     IAS: "RR" + Date.now() + Math.random().toString(36).slice(2, 10),
     userSession: Math.floor(Math.random() * 1e15).toString(),
-    ztecid // store auto-generated ztecid
+
+    ztecid: `ch0000009099000000${channelId}${Math.floor(
+      Math.random() * 9000 + 1000
+    )}`,
+
+    started: false
   };
 }
 
@@ -54,7 +68,7 @@ function rotateOrigin(session) {
   session.originIndex = (session.originIndex + 1) % ORIGINS.length;
 }
 
-// cleanup every 10 min
+// cleanup every 10 minutes
 setInterval(() => channelSessions.clear(), 10 * 60 * 1000);
 
 // =========================
@@ -85,9 +99,9 @@ async function fetchSticky(urlBuilder, req, session) {
       return res;
 
     } catch (err) {
-      console.error("⚠️ Origin failed:", ORIGINS[session.originIndex], err.message);
+      console.error("⚠️ Origin failed:", origin, err.message);
       rotateOrigin(session);
-      await new Promise(r => setTimeout(r, 200)); // small delay before retry
+      await new Promise(r => setTimeout(r, 200));
     }
   }
 
@@ -109,6 +123,22 @@ app.get("/:channelId/*", async (req, res) => {
   const path = req.params[0];
   const session = getSession(channelId);
 
+  const isMPD = path.endsWith(".mpd");
+  const isSegment = !isMPD;
+
+  // =========================
+  // START NUMBER LOGIC
+  // =========================
+  if (isSegment) {
+    if (!session.started) {
+      session.started = true;
+      console.log(`▶️ Playback started for channel ${channelId}`);
+    }
+
+    // filedura = 6 seconds
+    session.startNumber += 6;
+  }
+
   const authParams =
     `JITPDRMType=Widevine` +
     `&virtualDomain=001.live_hls.zte.com` +
@@ -120,7 +150,7 @@ app.get("/:channelId/*", async (req, res) => {
     `&ispcode=55` +
     `&IASHttpSessionId=${session.IAS}` +
     `&usersessionid=${session.userSession}` +
-    `&ztecid=${session.ztecid}`; // auto-generated per channel
+    `&ztecid=${session.ztecid}`;
 
   try {
     const upstream = await fetchSticky(origin => {
@@ -133,7 +163,7 @@ app.get("/:channelId/*", async (req, res) => {
     // =========================
     // MPD
     // =========================
-    if (path.endsWith(".mpd")) {
+    if (isMPD) {
       let mpd = await upstream.text();
       const proxyBase = `${req.protocol}://${req.get("host")}/${channelId}/`;
 
@@ -168,7 +198,6 @@ app.get("/:channelId/*", async (req, res) => {
     let lastChunk = Date.now();
     const STALL_LIMIT = 3000;
 
-    // Stall detection
     const stallTimer = setInterval(() => {
       if (Date.now() - lastChunk > STALL_LIMIT) {
         console.warn("⚠️ Segment stall detected, rotating origin...");
