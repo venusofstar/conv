@@ -50,7 +50,7 @@ function createSession(channelId) {
     rotateTimer: null
   };
 
-  // ⏱ Rotate origin every 1000ms
+  // ⏱ Auto-rotate origin every 1000ms
   session.rotateTimer = setInterval(() => {
     session.originIndex = (session.originIndex + 1) % ORIGINS.length;
   }, 1000);
@@ -122,6 +122,7 @@ async function fetchSticky(urlBuilder, req, session) {
 
     } catch (err) {
       console.error("⚠️ Origin failed:", ORIGINS[session.originIndex], err.message);
+      // rotate origin immediately on error
       session.originIndex = (session.originIndex + 1) % ORIGINS.length;
       await new Promise(r => setTimeout(r, 200));
     }
@@ -144,6 +145,9 @@ app.get("/:channelId/*", async (req, res) => {
   const { channelId } = req.params;
   const path = req.params[0];
   const session = getSession(channelId);
+
+  // 🔄 Rotate origin immediately for each request
+  session.originIndex = (session.originIndex + 1) % ORIGINS.length;
 
   const authParams =
     `JITPDRMType=Widevine` +
