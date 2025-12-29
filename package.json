@@ -1,17 +1,25 @@
+
 {
-  "name": "streaming-proxy",
+  "name": "dash-streaming-proxy",
   "version": "1.0.0",
-  "description": "DASH/HLS reverse proxy with sticky sessions and origin rotation",
+  "description": "Fast DASH MPD + segment proxy with session pinning and origin rotation",
   "main": "server.js",
-  "type": "module",
   "scripts": {
-    "start": "node server.js"
+    "start": "NODE_ENV=production node server.js",
+    "dev": "node server.js"
   },
-  "engines": {
-    "node": ">=18.0.0"
-  },
+  "keywords": [
+    "DASH",
+    "MPD",
+    "streaming",
+    "proxy",
+    "nodejs"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
   "dependencies": {
+    "cors": "^2.8.5",
     "express": "^4.18.2",
-    "cors": "^2.8.5"
+    "node-fetch": "^2.6.12"
   }
 }
