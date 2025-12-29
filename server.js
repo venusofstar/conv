@@ -39,31 +39,19 @@ const channelSessions = new Map();
 function createSession(channelId) {
   const ztecid = `ch0000009099000000${channelId}`;
 
-  const session = {
+  return {
     originIndex: Math.floor(Math.random() * ORIGINS.length),
     startNumber: 46489952 + Math.floor(Math.random() * 100000) * 6,
     IAS: "RR" + Date.now() + Math.random().toString(36).slice(2, 10),
     userSession: Math.floor(Math.random() * 1e15).toString(),
     ztecid,
     lastChunk: Date.now(),
-    stallTimer: null,
-    rotateTimer: null
+    stallTimer: null
   };
-
-  // ⏱ Auto-rotate origin every 1000ms
-  session.rotateTimer = setInterval(() => {
-    session.originIndex = (session.originIndex + 1) % ORIGINS.length;
-  }, 1000);
-
-  return session;
 }
 
 function clearSession(session) {
   if (!session) return;
-  if (session.rotateTimer) {
-    clearInterval(session.rotateTimer);
-    session.rotateTimer = null;
-  }
   if (session.stallTimer) {
     clearInterval(session.stallTimer);
     session.stallTimer = null;
@@ -77,14 +65,6 @@ function getSession(channelId) {
   return channelSessions.get(channelId);
 }
 
-function deleteSession(channelId) {
-  const session = channelSessions.get(channelId);
-  if (session) {
-    clearSession(session);
-    channelSessions.delete(channelId);
-  }
-}
-
 // Cleanup all sessions every 10 min
 setInterval(() => {
   for (const session of channelSessions.values()) {
@@ -94,9 +74,9 @@ setInterval(() => {
 }, 10 * 60 * 1000);
 
 // =========================
-// FETCH WITH STICKY ORIGIN
+// FAST ROTATING FETCH
 // =========================
-async function fetchSticky(urlBuilder, req, session) {
+async function fetchFast(urlBuilder, req, session) {
   for (let attempt = 0; attempt < ORIGINS.length; attempt++) {
     const origin = ORIGINS[session.originIndex];
     const url = urlBuilder(origin);
@@ -121,32 +101,29 @@ async function fetchSticky(urlBuilder, req, session) {
       return res;
 
     } catch (err) {
-      console.error("⚠️ Origin failed:", ORIGINS[session.originIndex], err.message);
-      // rotate origin immediately on error
+      console.warn("⚠️ Origin failed:", ORIGINS[session.originIndex], err.message);
+      // Rotate immediately on error
       session.originIndex = (session.originIndex + 1) % ORIGINS.length;
-      await new Promise(r => setTimeout(r, 200));
+      await new Promise(r => setTimeout(r, 50));
     }
   }
-
   throw new Error("All origins failed");
 }
 
 // =========================
 // HOME
 // =========================
-app.get("/", (_, res) => {
-  res.send("Enjoy your life");
-});
+app.get("/", (_, res) => res.send("Enjoy your life"));
 
 // =========================
-// DASH/HLS PROXY
+// REVERSE PROXY FOR DASH/HLS
 // =========================
 app.get("/:channelId/*", async (req, res) => {
   const { channelId } = req.params;
   const path = req.params[0];
   const session = getSession(channelId);
 
-  // 🔄 Rotate origin immediately for each request
+  // Rotate origin for every request/segment
   session.originIndex = (session.originIndex + 1) % ORIGINS.length;
 
   const authParams =
@@ -160,10 +137,10 @@ app.get("/:channelId/*", async (req, res) => {
     `&ispcode=55` +
     `&IASHttpSessionId=${session.IAS}` +
     `&usersessionid=${session.userSession}` +
-    `&ztecid=${session.ztecid}`; // fixed per channel
+    `&ztecid=${session.ztecid}`;
 
   try {
-    const upstream = await fetchSticky(origin => {
+    const upstream = await fetchFast(origin => {
       const base = `${origin}/001/2/${session.ztecid}/`;
       return path.includes("?")
         ? `${base}${path}&${authParams}`
@@ -171,17 +148,15 @@ app.get("/:channelId/*", async (req, res) => {
     }, req, session);
 
     // =========================
-    // MPD
+    // DASH MANIFEST
     // =========================
     if (path.endsWith(".mpd")) {
       let mpd = await upstream.text();
       const proxyBase = `${req.protocol}://${req.get("host")}/${channelId}/`;
 
+      // Replace BaseURL to point to this reverse proxy
       mpd = mpd.replace(/<BaseURL>.*?<\/BaseURL>/gs, "");
-      mpd = mpd.replace(
-        /<MPD([^>]*)>/,
-        `<MPD$1><BaseURL>${proxyBase}</BaseURL>`
-      );
+      mpd = mpd.replace(/<MPD([^>]*)>/, `<MPD$1><BaseURL>${proxyBase}</BaseURL>`);
 
       res.set({
         "Content-Type": "application/dash+xml",
@@ -193,7 +168,7 @@ app.get("/:channelId/*", async (req, res) => {
     }
 
     // =========================
-    // SEGMENTS
+    // SEGMENTS (HLS or MP4)
     // =========================
     res.set({
       "Content-Type": "video/mp4",
@@ -205,7 +180,6 @@ app.get("/:channelId/*", async (req, res) => {
     const proxyStream = new PassThrough();
     proxyStream.pipe(res);
 
-    // Stall detection
     session.lastChunk = Date.now();
     const STALL_LIMIT = 3000;
 
@@ -224,9 +198,7 @@ app.get("/:channelId/*", async (req, res) => {
       proxyStream.write(chunk);
     });
 
-    upstream.body.on("end", () => {
-      proxyStream.end();
-    });
+    upstream.body.on("end", () => proxyStream.end());
 
     upstream.body.on("error", err => {
       console.warn("⚠️ Stream error, rotating origin...", err.message);
@@ -244,5 +216,5 @@ app.get("/:channelId/*", async (req, res) => {
 // START SERVER
 // =========================
 app.listen(PORT, () => {
-  console.log(`✅ DASH/HLS proxy running on port ${PORT}`);
+  console.log(`✅ FAST REVERSE PROXY DASH/HLS running on port ${PORT}`);
 });
