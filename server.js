@@ -14,20 +14,11 @@ app.use(express.raw({ type: "*/*" }));
 // =========================
 // KEEP-ALIVE AGENTS
 // =========================
-const httpAgent = new http.Agent({
-  keepAlive: true,
-  maxSockets: 200,
-  keepAliveMsecs: 30000
-});
-
-const httpsAgent = new https.Agent({
-  keepAlive: true,
-  maxSockets: 200,
-  keepAliveMsecs: 30000
-});
+const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 200, keepAliveMsecs: 30000 });
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 200, keepAliveMsecs: 30000 });
 
 // =========================
-// ORIGINS (REAL)
+// ORIGINS
 // =========================
 const ORIGINS = [
   "http://143.44.136.67:6060",
@@ -38,21 +29,15 @@ const ORIGINS = [
 // PER-CHANNEL SESSION
 // =========================
 const channelSessions = new Map();
+const segmentCache = new Map(); // simple in-memory cache
 
 function createSession(channelId) {
   return {
     originIndex: Math.floor(Math.random() * ORIGINS.length),
-
-    // ORIGINAL BEHAVIOR PRESERVED
     startNumber: 46548662,
-
     IAS: "RR" + Date.now() + Math.random().toString(36).slice(2, 10),
     userSession: Math.floor(Math.random() * 1e15).toString(),
-
-    ztecid: `ch0000009099000000${channelId}${Math.floor(
-      Math.random() * 9000 + 1000
-    )}`,
-
+    ztecid: `ch0000009099000000${channelId}${Math.floor(Math.random() * 9000 + 1000)}`,
     started: false
   };
 }
@@ -69,10 +54,13 @@ function rotateOrigin(session) {
 }
 
 // Cleanup every 10 minutes
-setInterval(() => channelSessions.clear(), 10 * 60 * 1000);
+setInterval(() => {
+  channelSessions.clear();
+  segmentCache.clear();
+}, 10 * 60 * 1000);
 
 // =========================
-// FETCH WITH STICKY ORIGIN
+// FETCH WITH STICKY ORIGIN + FAILOVER
 // =========================
 async function fetchSticky(urlBuilder, req, session) {
   for (let attempt = 0; attempt < ORIGINS.length; attempt++) {
@@ -97,26 +85,22 @@ async function fetchSticky(urlBuilder, req, session) {
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res;
-
     } catch (err) {
-      console.warn("⚠️ Origin failed:", origin, err.message);
+      console.warn(`⚠️ Origin failed: ${origin}`, err.message);
       rotateOrigin(session);
-      await new Promise(r => setTimeout(r, 200));
+      await new Promise(r => setTimeout(r, 100));
     }
   }
-
   throw new Error("All origins failed");
 }
 
 // =========================
 // HOME
 // =========================
-app.get("/", (_, res) => {
-  res.send("Enjoy Your Life");
-});
+app.get("/", (_, res) => res.send("Enjoy Your Life"));
 
 // =========================
-// DASH / HLS PROXY
+// DASH PROXY (MPD + SEGMENTS)
 // =========================
 app.get("/:channelId/*", async (req, res) => {
   const { channelId } = req.params;
@@ -126,16 +110,12 @@ app.get("/:channelId/*", async (req, res) => {
   const isMPD = path.endsWith(".mpd");
   const isSegment = !isMPD;
 
-  // =========================
-  // ORIGINAL STARTNUMBER LOGIC
-  // =========================
-  if (isSegment) {
-    if (!session.started) {
-      session.started = true;
-      console.log(`▶️ Playback started for channel ${channelId}`);
-    }
+  if (isSegment && !session.started) {
+    session.started = true;
+    console.log(`▶️ Playback started for channel ${channelId}`);
+  }
 
-    // ORIGINAL (+6) — NOT CHANGED
+  if (isSegment) {
     session.startNumber += 6;
   }
 
@@ -155,30 +135,30 @@ app.get("/:channelId/*", async (req, res) => {
     `&IASHttpSessionId=${session.IAS}`;
 
   try {
+    // =========================
+    // Check cache for segments
+    // =========================
+    const cacheKey = `${channelId}-${path}`;
+    if (isSegment && segmentCache.has(cacheKey)) {
+      const cached = segmentCache.get(cacheKey);
+      res.set(cached.headers);
+      return res.send(cached.body);
+    }
+
     const upstream = await fetchSticky(origin => {
       const base = `${origin}/001/2/ch0000009099000000${channelId}/`;
-      return path.includes("?")
-        ? `${base}${path}&${authParams}`
-        : `${base}${path}?${authParams}`;
+      return path.includes("?") ? `${base}${path}&${authParams}` : `${base}${path}?${authParams}`;
     }, req, session);
 
-    // =========================
-    // MPD (PROTECTED OUTPUT)
-    // =========================
     if (isMPD) {
       let mpd = await upstream.text();
       const proxyBase = `${req.protocol}://${req.get("host")}/${channelId}/`;
 
-      // Remove original BaseURL
+      // Rewrite BaseURL to proxy
       mpd = mpd.replace(/<BaseURL>.*?<\/BaseURL>/gs, "");
+      mpd = mpd.replace(/<MPD([^>]*)>/, `<MPD$1><BaseURL>${proxyBase}</BaseURL>`);
 
-      // Insert proxy BaseURL
-      mpd = mpd.replace(
-        /<MPD([^>]*)>/,
-        `<MPD$1><BaseURL>${proxyBase}</BaseURL>`
-      );
-
-      // 🔐 REDACT SENSITIVE QUERY VALUES (DISPLAY ONLY)
+      // Redact sensitive query params
       mpd = mpd
         .replace(/IASHttpSessionId=[^&"]+/g, "IASHttpSessionId=[honortvph]")
         .replace(/usersessionid=[^&"]+/g, "usersessionid=[honortvph]")
@@ -187,31 +167,29 @@ app.get("/:channelId/*", async (req, res) => {
         .replace(/virtualDomain=[^&"]+/g, "virtualDomain=[honortvph]")
         .replace(/ispcode=[^&"]+/g, "ispcode=[honortvph]");
 
-      res.set({
-        "Content-Type": "application/dash+xml",
-        "Cache-Control": "no-store",
-        "Access-Control-Allow-Origin": "*"
-      });
-
+      res.set({ "Content-Type": "application/dash+xml", "Cache-Control": "no-store", "Access-Control-Allow-Origin": "*" });
       return res.send(mpd);
     }
 
     // =========================
-    // SEGMENTS (UNCHANGED)
+    // Serve segment
     // =========================
-    res.set({
+    const headers = {
       "Content-Type": "video/mp4",
       "Cache-Control": "no-store",
       "Access-Control-Allow-Origin": "*",
       "Connection": "keep-alive"
-    });
+    };
 
-    const proxyStream = new PassThrough();
-    proxyStream.pipe(res);
+    const stream = new PassThrough();
+    upstream.body.pipe(stream).pipe(res);
 
-    upstream.body.on("data", chunk => proxyStream.write(chunk));
-    upstream.body.on("end", () => proxyStream.end());
-    upstream.body.on("error", () => proxyStream.end());
+    // Cache segment
+    if (isSegment) {
+      const chunks = [];
+      upstream.body.on("data", chunk => chunks.push(chunk));
+      upstream.body.on("end", () => segmentCache.set(cacheKey, { headers, body: Buffer.concat(chunks) }));
+    }
 
   } catch (err) {
     console.error("❌ Proxy error:", err.message);
@@ -222,6 +200,4 @@ app.get("/:channelId/*", async (req, res) => {
 // =========================
 // START SERVER
 // =========================
-app.listen(PORT, () => {
-  console.log(`✅ Proxy running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`✅ Proxy running on port ${PORT}`));
