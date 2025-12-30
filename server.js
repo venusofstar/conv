@@ -29,7 +29,7 @@ const httpsAgent = new https.Agent({
    ORIGINS
 ========================= */
 const ORIGINS = [
-  "http://136.239.158.18:6610"
+  "http://161.49.17.2:6610"
 ];
 
 /* =========================
