@@ -1,70 +1,94 @@
+"use strict";
+
 const express = require("express");
 const cors = require("cors");
 const fetch = require("node-fetch");
 const http = require("http");
 const https = require("https");
-const { PassThrough } = require("stream");
+const { PassThrough, pipeline } = require("stream");
+const LRU = require("lru-cache");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.raw({ type: "*/*" }));
+app.use(express.raw({ type: "*/*", limit: "20mb" }));
 
-// =========================
-// KEEP-ALIVE AGENTS
-// =========================
-const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 200, keepAliveMsecs: 30000 });
-const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 200, keepAliveMsecs: 30000 });
+/* =========================
+   KEEP-ALIVE AGENTS
+========================= */
+const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 500 });
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 500 });
 
-// =========================
-// ORIGINS
-// =========================
+/* =========================
+   ORIGINS
+========================= */
 const ORIGINS = [
-  "http://143.44.136.67:6060"
+  "http://143.44.136.67:6060",
+  "http://136.239.158.18:6610"
 ];
 
-// =========================
-// PER-CHANNEL SESSION
-// =========================
-const channelSessions = new Map();
-const segmentCache = new Map(); // simple in-memory cache
+/* =========================
+   SESSION STORE
+========================= */
+const sessions = new Map();
 
+/* =========================
+   SEGMENT CACHE (LRU + TTL)
+========================= */
+const segmentCache = new LRU({
+  max: 1000,               // max segments
+  ttl: 30 * 1000,          // 30 seconds
+  allowStale: false,
+  updateAgeOnGet: true
+});
+
+/* =========================
+   SESSION FACTORY
+========================= */
 function createSession(channelId) {
   return {
     originIndex: Math.floor(Math.random() * ORIGINS.length),
     startNumber: 46548662,
-    IAS: "RR" + Date.now() + Math.random().toString(36).slice(2, 10),
+    IAS: `RR${Date.now()}${Math.random().toString(36).slice(2, 8)}`,
     userSession: Math.floor(Math.random() * 1e15).toString(),
     ztecid: `ch0000009099000000${channelId}${Math.floor(Math.random() * 9000 + 1000)}`,
-    started: false
+    started: false,
+    lastAccess: Date.now()
   };
 }
 
 function getSession(channelId) {
-  if (!channelSessions.has(channelId)) {
-    channelSessions.set(channelId, createSession(channelId));
+  let s = sessions.get(channelId);
+  if (!s) {
+    s = createSession(channelId);
+    sessions.set(channelId, s);
   }
-  return channelSessions.get(channelId);
+  s.lastAccess = Date.now();
+  return s;
 }
 
-function rotateOrigin(session) {
-  session.originIndex = (session.originIndex + 1) % ORIGINS.length;
-}
-
-// Cleanup every 10 minutes
+/* =========================
+   CLEANUP
+========================= */
 setInterval(() => {
-  channelSessions.clear();
-  segmentCache.clear();
-}, 10 * 60 * 1000);
+  const now = Date.now();
+  for (const [k, v] of sessions) {
+    if (now - v.lastAccess > 10 * 60 * 1000) {
+      sessions.delete(k);
+    }
+  }
+}, 5 * 60 * 1000);
 
-// =========================
-// FETCH WITH STICKY ORIGIN + FAILOVER
-// =========================
-async function fetchSticky(urlBuilder, req, session) {
-  for (let attempt = 0; attempt < ORIGINS.length; attempt++) {
+/* =========================
+   FETCH WITH FAILOVER
+========================= */
+async function fetchSticky(buildUrl, req, session) {
+  let lastErr;
+
+  for (let i = 0; i < ORIGINS.length; i++) {
     const origin = ORIGINS[session.originIndex];
-    const url = urlBuilder(origin);
+    const url = buildUrl(origin);
 
     try {
       const controller = new AbortController();
@@ -85,118 +109,109 @@ async function fetchSticky(urlBuilder, req, session) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res;
     } catch (err) {
-      console.warn(`⚠️ Origin failed: ${origin}`, err.message);
-      rotateOrigin(session);
-      await new Promise(r => setTimeout(r, 100));
+      lastErr = err;
+      session.originIndex = (session.originIndex + 1) % ORIGINS.length;
+      await new Promise(r => setTimeout(r, 80));
     }
   }
-  throw new Error("All origins failed");
+  throw lastErr;
 }
 
-// =========================
-// HOME
-// =========================
+/* =========================
+   HOME
+========================= */
 app.get("/", (_, res) => res.send("Enjoy Your Life"));
 
-// =========================
-// DASH PROXY (MPD + SEGMENTS)
-// =========================
+/* =========================
+   DASH PROXY
+========================= */
 app.get("/:channelId/*", async (req, res) => {
   const { channelId } = req.params;
   const path = req.params[0];
   const session = getSession(channelId);
 
   const isMPD = path.endsWith(".mpd");
-  const isSegment = !isMPD;
+  const cacheKey = `${channelId}:${path}`;
 
-  if (isSegment && !session.started) {
+  if (!isMPD) {
     session.started = true;
-    console.log(`▶️ Playback started for channel ${channelId}`);
-  }
-
-  if (isSegment) {
     session.startNumber += 6;
   }
 
-  const authParams =
-    `JITPTrackType=21` +
-    `&JITPDRMType=Widevine` +
-    `&JITPMediaType=DASH` +
-    `&virtualDomain=001.live_hls.zte.com` +
-    `&ispcode=55` +
-    `&ztecid=${session.ztecid}` +
-    `&m4s_min=1` +
+  /* ---------- CACHE HIT ---------- */
+  if (!isMPD && segmentCache.has(cacheKey)) {
+    const cached = segmentCache.get(cacheKey);
+    res.set(cached.headers);
+    return res.end(cached.body);
+  }
+
+  const auth =
+    `JITPTrackType=21&JITPDRMType=Widevine&JITPMediaType=DASH` +
+    `&virtualDomain=001.live_hls.zte.com&ispcode=55` +
+    `&ztecid=${session.ztecid}&m4s_min=1` +
     `&usersessionid=${session.userSession}` +
-    `&NeedJITP=1` +
-    `&isjitp=0` +
+    `&NeedJITP=1&isjitp=0` +
     `&startNumber=${session.startNumber}` +
-    `&filedura=6` +
-    `&IASHttpSessionId=${session.IAS}`;
+    `&filedura=6&IASHttpSessionId=${session.IAS}`;
 
   try {
-    // =========================
-    // Check cache for segments
-    // =========================
-    const cacheKey = `${channelId}-${path}`;
-    if (isSegment && segmentCache.has(cacheKey)) {
-      const cached = segmentCache.get(cacheKey);
-      res.set(cached.headers);
-      return res.send(cached.body);
-    }
-
     const upstream = await fetchSticky(origin => {
       const base = `${origin}/001/2/ch0000009099000000${channelId}/`;
-      return path.includes("?") ? `${base}${path}&${authParams}` : `${base}${path}?${authParams}`;
+      return path.includes("?")
+        ? `${base}${path}&${auth}`
+        : `${base}${path}?${auth}`;
     }, req, session);
 
+    /* ---------- MPD ---------- */
     if (isMPD) {
       let mpd = await upstream.text();
       const proxyBase = `${req.protocol}://${req.get("host")}/${channelId}/`;
 
-      // Rewrite BaseURL to proxy
-      mpd = mpd.replace(/<BaseURL>.*?<\/BaseURL>/gs, "");
-      mpd = mpd.replace(/<MPD([^>]*)>/, `<MPD$1><BaseURL>${proxyBase}</BaseURL>`);
-
-      // Redact sensitive query params
       mpd = mpd
-        .replace(/IASHttpSessionId=[^&"]+/g, "IASHttpSessionId=[honortvph]")
-        .replace(/usersessionid=[^&"]+/g, "usersessionid=[honortvph]")
-        .replace(/ztecid=[^&"]+/g, "ztecid=[honortvph]")
-        .replace(/startNumber=[^&"]+/g, "startNumber=[honortvph]")
-        .replace(/virtualDomain=[^&"]+/g, "virtualDomain=[honortvph]")
-        .replace(/ispcode=[^&"]+/g, "ispcode=[honortvph]");
+        .replace(/<BaseURL>.*?<\/BaseURL>/gs, "")
+        .replace(/<MPD([^>]*)>/, `<MPD$1><BaseURL>${proxyBase}</BaseURL>`)
+        .replace(/(IASHttpSessionId|usersessionid|ztecid|startNumber|ispcode|virtualDomain)=[^&"]+/g, "$1=[redacted]");
 
-      res.set({ "Content-Type": "application/dash+xml", "Cache-Control": "no-store", "Access-Control-Allow-Origin": "*" });
-      return res.send(mpd);
+      res.set({
+        "Content-Type": "application/dash+xml",
+        "Cache-Control": "no-store",
+        "Access-Control-Allow-Origin": "*"
+      });
+      return res.end(mpd);
     }
 
-    // =========================
-    // Serve segment
-    // =========================
+    /* ---------- SEGMENT STREAM ---------- */
     const headers = {
       "Content-Type": "video/mp4",
       "Cache-Control": "no-store",
-      "Access-Control-Allow-Origin": "*",
-      "Connection": "keep-alive"
+      "Access-Control-Allow-Origin": "*"
     };
+    res.set(headers);
 
-    const stream = new PassThrough();
-    upstream.body.pipe(stream).pipe(res);
+    const buffer = [];
+    const tee = new PassThrough();
 
-    // Cache segment
-    if (isSegment) {
-      const chunks = [];
-      upstream.body.on("data", chunk => chunks.push(chunk));
-      upstream.body.on("end", () => segmentCache.set(cacheKey, { headers, body: Buffer.concat(chunks) }));
-    }
+    upstream.body.on("data", d => buffer.push(d));
+    upstream.body.on("end", () => {
+      segmentCache.set(cacheKey, {
+        headers,
+        body: Buffer.concat(buffer)
+      });
+    });
+
+    pipeline(upstream.body, tee, res, err => {
+      if (err) res.destroy();
+    });
 
   } catch (err) {
-    console.error("❌ Proxy error:", err.message);
-    res.status(502).end();
+    console.error("Proxy error:", err.message);
+    res.sendStatus(502);
   }
 });
 
-// =========================
-// START SERVER
-// =========================
-app.listen(PORT, () => console.log(`✅ Proxy running on port ${PORT}`));
+/* =========================
+   START
+========================= */
+app.listen(PORT, () =>
+  console.log(`✅ Optimized DASH proxy running on ${PORT}`)
+);
