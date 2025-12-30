@@ -180,12 +180,12 @@ app.get("/:channelId/*", async (req, res) => {
 
       // 🔐 REDACT SENSITIVE QUERY VALUES (DISPLAY ONLY)
       mpd = mpd
-        .replace(/IASHttpSessionId=[^&"]+/g, "IASHttpSessionId=[Loading]")
-        .replace(/usersessionid=[^&"]+/g, "usersessionid=[Loading]")
-        .replace(/ztecid=[^&"]+/g, "ztecid=[Loading]")
-        .replace(/startNumber=[^&"]+/g, "startNumber=[Loading]")
-        .replace(/virtualDomain=[^&"]+/g, "virtualDomain=[Loading]")
-        .replace(/ispcode=[^&"]+/g, "ispcode=[Loading]");
+        .replace(/IASHttpSessionId=[^&"]+/g, "IASHttpSessionId=[honortvph]")
+        .replace(/usersessionid=[^&"]+/g, "usersessionid=[honortvph]")
+        .replace(/ztecid=[^&"]+/g, "ztecid=[honortvph]")
+        .replace(/startNumber=[^&"]+/g, "startNumber=[honortvph]")
+        .replace(/virtualDomain=[^&"]+/g, "virtualDomain=[honortvph]")
+        .replace(/ispcode=[^&"]+/g, "ispcode=[honortvph]");
 
       res.set({
         "Content-Type": "application/dash+xml",
