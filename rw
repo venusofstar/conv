@@ -1,4 +1,11 @@
 #EXTM3U
+#EXTINF:-1 tvg-logo="" group-title="LOCAL TV CHANNELS",GMA
+#EXTVLCOPT:http-user-agent=VLC/3.0.20 LibVLC
+https://bisdaktv.fun/stream/nayswan.php?name=gma7
+
+#EXTINF:-1 tvg-logo="" group-title="LOCAL TV CHANNELS",GTV
+#EXTVLCOPT:http-user-agent=VLC/3.0.20 LibVLC
+https://bisdaktv.fun/stream/nayswan.php?name=gma%20news%20tv
 #KODIPROP:inputstream.adaptive.manifest_type=mpd
 #KODIPROP:inputstream.adaptive.license_type=org.w3.clearkey
 #KODIPROP:inputstream.adaptive.license_key=31363232353335323435353337353331:35416a68643065697575493337566135
