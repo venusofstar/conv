@@ -112,7 +112,7 @@ async function fetchSticky(urlBuilder, req, session) {
 // HOME
 // =========================
 app.get("/", (_, res) => {
-  res.send("DASH proxy running");
+  res.send("Enjoy Your Life");
 });
 
 // =========================
