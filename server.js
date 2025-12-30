@@ -27,11 +27,11 @@ const httpsAgent = new https.Agent({
 });
 
 // =========================
-// ORIGINS
+// ORIGINS (REDACTED)
 // =========================
 const ORIGINS = [
-  "http://143.44.136.67:6060",
-  "http://136.239.158.18:6610"
+  "http://[ORIGIN_1]",
+  "http://[ORIGIN_2]"
 ];
 
 // =========================
@@ -43,15 +43,13 @@ function createSession(channelId) {
   return {
     originIndex: Math.floor(Math.random() * ORIGINS.length),
 
-    // Base live startNumber (will start counting on playback)
-    startNumber: 46489952,
+    // Base live startNumber (redacted)
+    startNumber: [REDACTED_START_NUMBER],
 
     IAS: "RR" + Date.now() + Math.random().toString(36).slice(2, 10),
     userSession: Math.floor(Math.random() * 1e15).toString(),
 
-    ztecid: `ch0000009099000000${channelId}${Math.floor(
-      Math.random() * 9000 + 1000
-    )}`,
+    ztecid: `ch[REDACTED_PREFIX]${channelId}[REDACTED_SUFFIX]`,
 
     started: false
   };
@@ -112,11 +110,11 @@ async function fetchSticky(urlBuilder, req, session) {
 // HOME
 // =========================
 app.get("/", (_, res) => {
-  res.send("Enjoy your life");
+  res.send("Service running");
 });
 
 // =========================
-// DASH/HLS PROXY
+// DASH / HLS PROXY
 // =========================
 app.get("/:channelId/*", async (req, res) => {
   const { channelId } = req.params;
@@ -135,33 +133,33 @@ app.get("/:channelId/*", async (req, res) => {
       console.log(`▶️ Playback started for channel ${channelId}`);
     }
 
-    // filedura = 6 seconds
+    // segment duration (seconds)
     session.startNumber += 6;
   }
 
   const authParams =
-    `JITPDRMType=Widevine` +
-    `&virtualDomain=001.live_hls.zte.com` +
+    `JITPDRMType=[REDACTED]` +
+    `&virtualDomain=[REDACTED_DOMAIN]` +
     `&m4s_min=1` +
     `&NeedJITP=1` +
     `&isjitp=0` +
     `&startNumber=${session.startNumber}` +
     `&filedura=6` +
-    `&ispcode=55` +
+    `&ispcode=[REDACTED]` +
     `&IASHttpSessionId=${session.IAS}` +
     `&usersessionid=${session.userSession}` +
     `&ztecid=${session.ztecid}`;
 
   try {
     const upstream = await fetchSticky(origin => {
-      const base = `${origin}/001/2/ch0000009099000000${channelId}/`;
+      const base = `${origin}/[REDACTED_PATH]/${channelId}/`;
       return path.includes("?")
         ? `${base}${path}&${authParams}`
         : `${base}${path}?${authParams}`;
     }, req, session);
 
     // =========================
-    // MPD
+    // MPD REWRITE
     // =========================
     if (isMPD) {
       let mpd = await upstream.text();
@@ -183,7 +181,7 @@ app.get("/:channelId/*", async (req, res) => {
     }
 
     // =========================
-    // SEGMENTS
+    // SEGMENT STREAM
     // =========================
     res.set({
       "Content-Type": "video/mp4",
@@ -200,7 +198,7 @@ app.get("/:channelId/*", async (req, res) => {
 
     const stallTimer = setInterval(() => {
       if (Date.now() - lastChunk > STALL_LIMIT) {
-        console.warn("⚠️ Segment stall detected, rotating origin...");
+        console.warn("⚠️ Stall detected, rotating origin");
         rotateOrigin(session);
         upstream.body.destroy();
       }
@@ -217,7 +215,6 @@ app.get("/:channelId/*", async (req, res) => {
     });
 
     upstream.body.on("error", err => {
-      console.warn("⚠️ Stream error, rotating origin...", err.message);
       rotateOrigin(session);
       proxyStream.end();
     });
@@ -232,5 +229,5 @@ app.get("/:channelId/*", async (req, res) => {
 // START SERVER
 // =========================
 app.listen(PORT, () => {
-  console.log(`✅ DASH/HLS proxy running on port ${PORT}`);
+  console.log(`✅ Proxy running on port ${PORT}`);
 });
