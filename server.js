@@ -141,7 +141,7 @@ app.get("/:channelId/*", async (req, res) => {
 
   const authParams =
     `JITPDRMType=Widevine` +
-    `&virtualDomain=001.live_hls.zte.comvideoid` +
+    `&virtualDomain=001.live_hls.zte.com` +
     `&m4s_min=1` +
     `&NeedJITP=1` +
     `&isjitp=0` +
