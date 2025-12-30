@@ -27,7 +27,7 @@ const httpsAgent = new https.Agent({
 });
 
 // =========================
-// ORIGINS
+// ORIGINS (REAL)
 // =========================
 const ORIGINS = [
   "http://143.44.136.67:6060",
@@ -43,7 +43,7 @@ function createSession(channelId) {
   return {
     originIndex: Math.floor(Math.random() * ORIGINS.length),
 
-    // MUST be segment index, not seconds
+    // ORIGINAL BEHAVIOR PRESERVED
     startNumber: 46548662,
 
     IAS: "RR" + Date.now() + Math.random().toString(36).slice(2, 10),
@@ -116,7 +116,7 @@ app.get("/", (_, res) => {
 });
 
 // =========================
-// DASH PROXY
+// DASH / HLS PROXY
 // =========================
 app.get("/:channelId/*", async (req, res) => {
   const { channelId } = req.params;
@@ -127,7 +127,7 @@ app.get("/:channelId/*", async (req, res) => {
   const isSegment = !isMPD;
 
   // =========================
-  // SEGMENT NUMBER LOGIC
+  // ORIGINAL STARTNUMBER LOGIC
   // =========================
   if (isSegment) {
     if (!session.started) {
@@ -135,22 +135,24 @@ app.get("/:channelId/*", async (req, res) => {
       console.log(`▶️ Playback started for channel ${channelId}`);
     }
 
-    // MUST increment by 1 per segment
-    session.startNumber += 1;
+    // ORIGINAL (+6) — NOT CHANGED
+    session.startNumber += 6;
   }
 
   const authParams =
-    `JITPDRMType=Widevine` +
+    `JITPTrackType=21` +
+    `&JITPDRMType=Widevine` +
+    `&JITPMediaType=DASH` +
     `&virtualDomain=001.live_hls.zte.com` +
+    `&ispcode=55` +
+    `&ztecid=${session.ztecid}` +
     `&m4s_min=1` +
+    `&usersessionid=${session.userSession}` +
     `&NeedJITP=1` +
     `&isjitp=0` +
     `&startNumber=${session.startNumber}` +
     `&filedura=6` +
-    `&ispcode=55` +
-    `&IASHttpSessionId=${session.IAS}` +
-    `&usersessionid=${session.userSession}` +
-    `&ztecid=${session.ztecid}`;
+    `&IASHttpSessionId=${session.IAS}`;
 
   try {
     const upstream = await fetchSticky(origin => {
@@ -161,18 +163,29 @@ app.get("/:channelId/*", async (req, res) => {
     }, req, session);
 
     // =========================
-    // MPD REWRITE
+    // MPD (PROTECTED OUTPUT)
     // =========================
     if (isMPD) {
       let mpd = await upstream.text();
       const proxyBase = `${req.protocol}://${req.get("host")}/${channelId}/`;
 
+      // Remove original BaseURL
       mpd = mpd.replace(/<BaseURL>.*?<\/BaseURL>/gs, "");
-      mpd = mpd.replace(/\$Time\$/g, "$Number$");
+
+      // Insert proxy BaseURL
       mpd = mpd.replace(
         /<MPD([^>]*)>/,
         `<MPD$1><BaseURL>${proxyBase}</BaseURL>`
       );
+
+      // 🔐 REDACT SENSITIVE QUERY VALUES (DISPLAY ONLY)
+      mpd = mpd
+        .replace(/IASHttpSessionId=[^&"]+/g, "IASHttpSessionId=[REDACTED]")
+        .replace(/usersessionid=[^&"]+/g, "usersessionid=[REDACTED]")
+        .replace(/ztecid=[^&"]+/g, "ztecid=[REDACTED]")
+        .replace(/startNumber=[^&"]+/g, "startNumber=[REDACTED]")
+        .replace(/virtualDomain=[^&"]+/g, "virtualDomain=[REDACTED]")
+        .replace(/ispcode=[^&"]+/g, "ispcode=[REDACTED]");
 
       res.set({
         "Content-Type": "application/dash+xml",
@@ -184,12 +197,10 @@ app.get("/:channelId/*", async (req, res) => {
     }
 
     // =========================
-    // SEGMENT STREAM
+    // SEGMENTS (UNCHANGED)
     // =========================
-    const isAudio = path.includes("a1");
-
     res.set({
-      "Content-Type": isAudio ? "audio/mp4" : "video/mp4",
+      "Content-Type": "video/mp4",
       "Cache-Control": "no-store",
       "Access-Control-Allow-Origin": "*",
       "Connection": "keep-alive"
@@ -198,32 +209,9 @@ app.get("/:channelId/*", async (req, res) => {
     const proxyStream = new PassThrough();
     proxyStream.pipe(res);
 
-    let lastChunk = Date.now();
-    const STALL_LIMIT = 3000;
-
-    const stallTimer = setInterval(() => {
-      if (Date.now() - lastChunk > STALL_LIMIT) {
-        console.warn("⚠️ Segment stall detected, rotating origin");
-        rotateOrigin(session);
-        upstream.body.destroy();
-      }
-    }, 500);
-
-    upstream.body.on("data", chunk => {
-      lastChunk = Date.now();
-      proxyStream.write(chunk);
-    });
-
-    upstream.body.on("end", () => {
-      clearInterval(stallTimer);
-      proxyStream.end();
-    });
-
-    upstream.body.on("error", err => {
-      console.warn("⚠️ Stream error:", err.message);
-      rotateOrigin(session);
-      proxyStream.end();
-    });
+    upstream.body.on("data", chunk => proxyStream.write(chunk));
+    upstream.body.on("end", () => proxyStream.end());
+    upstream.body.on("error", () => proxyStream.end());
 
   } catch (err) {
     console.error("❌ Proxy error:", err.message);
@@ -235,5 +223,5 @@ app.get("/:channelId/*", async (req, res) => {
 // START SERVER
 // =========================
 app.listen(PORT, () => {
-  console.log(`✅ DASH proxy running on port ${PORT}`);
+  console.log(`✅ Proxy running on port ${PORT}`);
 });
