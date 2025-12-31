@@ -3,12 +3,10 @@ const cors = require("cors");
 const fetch = require("node-fetch");
 const http = require("http");
 const https = require("https");
-const crypto = require("crypto");
 const { PassThrough } = require("stream");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const AUTH_SECRET = process.env.AUTH_SECRET || "Tajaqa%2FdPohvabxHbYUVrZLZDsxmxbufdpmz6ykZVY4LvT86fM74ocVChyFS93HUe9OnZTxGvJPcGpQT0Y5Pwg";
 
 app.use(cors());
 app.use(express.raw({ type: "*/*" }));
@@ -33,13 +31,15 @@ const ORIGINS = [
 const channelSessions = new Map();
 
 function createSession(channelId) {
+  // Auto-generate ztecid per channelId
   const ztecid = `ch0000009099000000${channelId}${Math.floor(Math.random() * 9000 + 1000)}`;
+
   return {
     originIndex: Math.floor(Math.random() * ORIGINS.length),
     startNumber: 46489952 + Math.floor(Math.random() * 100000) * 6,
     IAS: "RR" + Date.now() + Math.random().toString(36).slice(2, 10),
     userSession: Math.floor(Math.random() * 1e15).toString(),
-    ztecid
+    ztecid // store auto-generated ztecid
   };
 }
 
@@ -56,30 +56,6 @@ function rotateOrigin(session) {
 
 // cleanup every 10 min
 setInterval(() => channelSessions.clear(), 10 * 60 * 1000);
-
-// =========================
-// AUTHINFO GENERATOR
-// =========================
-function generateAuthInfo(session, channelId) {
-  const payload = JSON.stringify({
-    ch: channelId,
-    ias: session.IAS,
-    us: session.userSession,
-    ztecid: session.ztecid,
-    ts: Date.now()
-  });
-
-  const key = crypto.createHash("sha256").update(AUTH_SECRET).digest();
-  const iv = crypto.randomBytes(16);
-
-  const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
-  let encrypted = cipher.update(payload, "utf8", "base64");
-  encrypted += cipher.final("base64");
-
-  const combined = iv.toString("base64") + encrypted;
-
-  return encodeURIComponent(combined);
-}
 
 // =========================
 // FETCH WITH STICKY ORIGIN
@@ -111,7 +87,7 @@ async function fetchSticky(urlBuilder, req, session) {
     } catch (err) {
       console.error("⚠️ Origin failed:", ORIGINS[session.originIndex], err.message);
       rotateOrigin(session);
-      await new Promise(r => setTimeout(r, 200));
+      await new Promise(r => setTimeout(r, 200)); // small delay before retry
     }
   }
 
@@ -132,7 +108,6 @@ app.get("/:channelId/*", async (req, res) => {
   const { channelId } = req.params;
   const path = req.params[0];
   const session = getSession(channelId);
-  const authInfo = generateAuthInfo(session, channelId);
 
   const authParams =
     `JITPDRMType=Widevine` +
@@ -145,8 +120,7 @@ app.get("/:channelId/*", async (req, res) => {
     `&ispcode=55` +
     `&IASHttpSessionId=${session.IAS}` +
     `&usersessionid=${session.userSession}` +
-    `&ztecid=${session.ztecid}` +
-    `&AuthInfo=${authInfo}`;
+    `&ztecid=${session.ztecid}`; // auto-generated per channel
 
   try {
     const upstream = await fetchSticky(origin => {
@@ -194,6 +168,7 @@ app.get("/:channelId/*", async (req, res) => {
     let lastChunk = Date.now();
     const STALL_LIMIT = 3000;
 
+    // Stall detection
     const stallTimer = setInterval(() => {
       if (Date.now() - lastChunk > STALL_LIMIT) {
         console.warn("⚠️ Segment stall detected, rotating origin...");
