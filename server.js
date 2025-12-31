@@ -8,7 +8,7 @@ const { PassThrough } = require("stream");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const AUTH_SECRET = process.env.AUTH_SECRET || "your-secret-key";
+const AUTH_SECRET = process.env.AUTH_SECRET || "Tajaqa%2FdPohvabxHbYUVrZLZDsxmxbufdpmz6ykZVY4LvT86fM74ocVChyFS93HUe9OnZTxGvJPcGpQT0Y5Pwg";
 
 app.use(cors());
 app.use(express.raw({ type: "*/*" }));
