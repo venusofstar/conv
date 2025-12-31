@@ -3,7 +3,6 @@ const cors = require("cors");
 const fetch = require("node-fetch");
 const http = require("http");
 const https = require("https");
-const { PassThrough } = require("stream");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -14,8 +13,17 @@ app.use(express.raw({ type: "*/*" }));
 // =========================
 // KEEP-ALIVE AGENTS
 // =========================
-const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 200, keepAliveMsecs: 30000 });
-const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 200, keepAliveMsecs: 30000 });
+const httpAgent = new http.Agent({
+  keepAlive: true,
+  maxSockets: 200,
+  keepAliveMsecs: 30000
+});
+
+const httpsAgent = new https.Agent({
+  keepAlive: true,
+  maxSockets: 200,
+  keepAliveMsecs: 30000
+});
 
 // =========================
 // ORIGINS
@@ -25,11 +33,14 @@ const ORIGINS = [
 ];
 
 // =========================
-// PER-CHANNEL SESSION
+// SESSION STORAGE
 // =========================
 const channelSessions = new Map();
-const segmentCache = new Map(); // simple in-memory cache
+const segmentCache = new Map();
 
+// =========================
+// SESSION HELPERS
+// =========================
 function createSession(channelId) {
   return {
     originIndex: Math.floor(Math.random() * ORIGINS.length),
@@ -59,16 +70,16 @@ setInterval(() => {
 }, 10 * 60 * 1000);
 
 // =========================
-// FETCH WITH STICKY ORIGIN + FAILOVER
+// FETCH WITH FAILOVER
 // =========================
 async function fetchSticky(urlBuilder, req, session) {
-  for (let attempt = 0; attempt < ORIGINS.length; attempt++) {
+  for (let i = 0; i < ORIGINS.length; i++) {
     const origin = ORIGINS[session.originIndex];
     const url = urlBuilder(origin);
 
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 12000);
+      const timeout = setTimeout(() => controller.abort(), 15000);
 
       const res = await fetch(url, {
         agent: url.startsWith("https") ? httpsAgent : httpAgent,
@@ -84,10 +95,10 @@ async function fetchSticky(urlBuilder, req, session) {
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res;
+
     } catch (err) {
-      console.warn(`⚠️ Origin failed: ${origin}`, err.message);
+      console.warn("⚠️ Origin failed:", origin, err.message);
       rotateOrigin(session);
-      await new Promise(r => setTimeout(r, 100));
     }
   }
   throw new Error("All origins failed");
@@ -99,7 +110,7 @@ async function fetchSticky(urlBuilder, req, session) {
 app.get("/", (_, res) => res.send("Enjoy Your Life"));
 
 // =========================
-// DASH PROXY (MPD + SEGMENTS)
+// DASH PROXY
 // =========================
 app.get("/:channelId/*", async (req, res) => {
   const { channelId } = req.params;
@@ -111,12 +122,10 @@ app.get("/:channelId/*", async (req, res) => {
 
   if (isSegment && !session.started) {
     session.started = true;
-    console.log(`▶️ Playback started for channel ${channelId}`);
+    console.log(`▶ Playback started for channel ${channelId}`);
   }
 
-  if (isSegment) {
-    session.startNumber += 6;
-  }
+  if (isSegment) session.startNumber += 6;
 
   const authParams =
     `JITPTrackType=21` +
@@ -135,29 +144,35 @@ app.get("/:channelId/*", async (req, res) => {
 
   try {
     // =========================
-    // Check cache for segments
+    // SEGMENT CACHE
     // =========================
-    const cacheKey = `${channelId}-${path}`;
+    const cacheKey = `${channelId}:${path}`;
     if (isSegment && segmentCache.has(cacheKey)) {
       const cached = segmentCache.get(cacheKey);
       res.set(cached.headers);
-      return res.send(cached.body);
+      return res.end(cached.body);
     }
 
     const upstream = await fetchSticky(origin => {
       const base = `${origin}/001/2/ch0000009099000000${channelId}/`;
-      return path.includes("?") ? `${base}${path}&${authParams}` : `${base}${path}?${authParams}`;
+      return path.includes("?")
+        ? `${base}${path}&${authParams}`
+        : `${base}${path}?${authParams}`;
     }, req, session);
 
+    // =========================
+    // MPD HANDLING
+    // =========================
     if (isMPD) {
       let mpd = await upstream.text();
       const proxyBase = `${req.protocol}://${req.get("host")}/${channelId}/`;
 
-      // Rewrite BaseURL to proxy
       mpd = mpd.replace(/<BaseURL>.*?<\/BaseURL>/gs, "");
-      mpd = mpd.replace(/<MPD([^>]*)>/, `<MPD$1><BaseURL>${proxyBase}</BaseURL>`);
+      mpd = mpd.replace(
+        /<MPD([^>]*)>/,
+        `<MPD$1><BaseURL>${proxyBase}</BaseURL>`
+      );
 
-      // Redact sensitive query params
       mpd = mpd
         .replace(/IASHttpSessionId=[^&"]+/g, "IASHttpSessionId=[honortvph]")
         .replace(/usersessionid=[^&"]+/g, "usersessionid=[honortvph]")
@@ -166,12 +181,17 @@ app.get("/:channelId/*", async (req, res) => {
         .replace(/virtualDomain=[^&"]+/g, "virtualDomain=[honortvph]")
         .replace(/ispcode=[^&"]+/g, "ispcode=[honortvph]");
 
-      res.set({ "Content-Type": "application/dash+xml", "Cache-Control": "no-store", "Access-Control-Allow-Origin": "*" });
+      res.set({
+        "Content-Type": "application/dash+xml",
+        "Cache-Control": "no-store",
+        "Access-Control-Allow-Origin": "*"
+      });
+
       return res.send(mpd);
     }
 
     // =========================
-    // Serve segment
+    // SEGMENT HANDLING (FIXED)
     // =========================
     const headers = {
       "Content-Type": "video/mp4",
@@ -180,15 +200,20 @@ app.get("/:channelId/*", async (req, res) => {
       "Connection": "keep-alive"
     };
 
-    const stream = new PassThrough();
-    upstream.body.pipe(stream).pipe(res);
+    res.set(headers);
 
-    // Cache segment
-    if (isSegment) {
-      const chunks = [];
-      upstream.body.on("data", chunk => chunks.push(chunk));
-      upstream.body.on("end", () => segmentCache.set(cacheKey, { headers, body: Buffer.concat(chunks) }));
+    // Consume stream ONCE
+    const chunks = [];
+    for await (const chunk of upstream.body) {
+      chunks.push(chunk);
     }
+
+    const body = Buffer.concat(chunks);
+
+    res.end(body);
+
+    // Cache segment safely
+    segmentCache.set(cacheKey, { headers, body });
 
   } catch (err) {
     console.error("❌ Proxy error:", err.message);
@@ -199,4 +224,6 @@ app.get("/:channelId/*", async (req, res) => {
 // =========================
 // START SERVER
 // =========================
-app.listen(PORT, () => console.log(`✅ Proxy running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`✅ Proxy running on port ${PORT}`);
+});
