@@ -13,7 +13,8 @@ https://conv-production.up.railway.app/1086/manifest.mpd
 #KODIPROP:inputstream.adaptive.license_type=org.w3.clearkey
 #KODIPROP:inputstream.adaptive.license_key=31363231383439313133323034313530:78645370476a496d5756385231474332
 #EXTINF:-1 tvg-id="1094" tvg-logo="https://ottepg8.comclark.com:8443/iptvepg/images/markurl/mark_1723133873954.png" group-title="conv-production",RPTV
-https://conv-production.up.railway.app/1094/manifest.mpd
+http://136.239.158.10:6610/001/2/ch00000090990000001094/manifest.mpd?AuthInfo=CfqQ6PIdhPzZ8SbJEgvnDgFvPJUZkFdpJ6EpngD6myW1EOTOA%2FDBgD6aiClgzrxFJbNpK52PkkwZrw48jf7mig%3D%3D&version=v1.0&BreakPoint=0&virtualDomain=001.live_hls.zte.com&programid=ch00000000000000001215&contentid=ch00000000000000001215&videoid=ch00000090990000001094&recommendtype=0&userid=1878702116443&boid=001&stbid=02:00:00:00:00:00&terminalflag=1&profilecode=&usersessionid=1442189551&N
+eedJITP=1&JITPMediaType=DASH&JITPDRMType=Widevine&RateLow=1000000&RateHigh=2500000000000000000&IASHttpSessionId=OTT000020260121163802410409&ispcode=55
 #KODIPROP:inputstream.adaptive.manifest_type=mpd
 #KODIPROP:inputstream.adaptive.license_type=org.w3.clearkey
 #KODIPROP:inputstream.adaptive.license_key=31363230393830323336303039323834:7676746b584436514331503256784654
@@ -29,7 +30,8 @@ https://conv-production.up.railway.app/1143/manifest.mpd
 #KODIPROP:inputstream.adaptive.license_type=org.w3.clearkey
 #KODIPROP:inputstream.adaptive.license_key=31363231383438333031323033393138:38694e34324d543478316b7455753437
 #EXTINF:-1 tvg-id="1093" tvg-logo="https://ottepg8.comclark.com:8443/iptvepg/images/markurl/mark_1723126306082.png" group-title="conv-production",GMA 7
-https://conv-production.up.railway.app/1093/manifest.mpd
+http://136.239.158.10:6610/001/2/ch00000090990000001093/manifest.mpd?AuthInfo=CfqQ6PIdhPzZ8SbJEgvnDgFvPJUZkFdpJ6EpngD6myX0DcCOi3r8ytKqNEPKg0DEJbNpK52PkkwZrw48jf7mig%3D%3D&version=v1.0&BreakPoint=0&virtualDomain=001.live_hls.zte.com&programid=ch00000000000000001214&contentid=ch00000000000000001214&videoid=ch00000090990000001093&recommendtype=0&userid=1878702116443&boid=001&stbid=02:00:00:00:00:00&terminalflag=1&profilecode=&usersessionid=1442189550&NeedJITP=1&JITPMediaType=DASH&JITPDRMType=Widevine&RateLow=1000000&RateHigh=2500000000000000000&IASHttpSessionId=OTT000020260121163645930652&ispcode=55
+
 #KODIPROP:inputstream.adaptive.manifest_type=mpd
 #KODIPROP:inputstream.adaptive.license_type=org.w3.clearkey
 #KODIPROP:inputstream.adaptive.license_key=31363735313534353138343339333732:3970705738596631374f54324c384f57
@@ -68,7 +70,8 @@ https://conv-production.up.railway.app/1250/manifest.mpd
 #KODIPROP:inputstream.adaptive.license_type=org.w3.clearkey
 #KODIPROP:inputstream.adaptive.license_key=31363231383438303333323033373730:375a684a31357647653565574b363076
 #EXTINF:-1 tvg-id="1088" tvg-logo="https://ottepg8.comclark.com:8443/iptvepg/images/markurl/mark_1723134335547.png" group-title="conv-production",TV5
-https://conv-production.up.railway.app/1088/manifest.mpd
+http://161.49.17.2:6610/001/2/ch00000090990000001088/manifest.mpd?AuthInfo=CfqQ6PIdhPzZ8SbJEgvnDgFvPJUZkFdpJ6EpngD6myUlRQLN3TSwYWx32ACXa%2Bd3JbNpK52PkkwZrw48jf7mig%3D%3D&version=v1.0&BreakPoint=0&virtualDomain=001.live_hls.zte.com&programid=ch00000000000000001213&contentid=ch00000000000000001213&videoid=ch00000090990000001088&recommendtype=0&userid=1878702116443&boid=001&stbid=02:00:00:00:00:00&terminalflag=1&profilecode=&usersessionid=1442189549&NeedJITP=1&JITPMediaType=DASH&JITPDRMType=Widevine&RateLow=1000000&RateHigh=2500000000000000000&IASHttpSessionId=OTT000020260121163503912665&ispcode=55
+
 #KODIPROP:inputstream.adaptive.manifest_type=mpd
 #KODIPROP:inputstream.adaptive.license_type=org.w3.clearkey
 #KODIPROP:inputstream.adaptive.license_key=31363231393339333834323333353038:756a7351733939554668654a79633372
@@ -200,7 +203,8 @@ https://conv-production.up.railway.app/1267/manifest.mpd
 #KODIPROP:inputstream.adaptive.license_type=org.w3.clearkey
 #KODIPROP:inputstream.adaptive.license_key=31363233323238353336303333363036:367662564c69425947353948374f4553
 #EXTINF:-1 tvg-id="1179" tvg-logo="https://ottepg8.comclark.com:8443/iptvepg/images/markurl/mark_1723136602348.png" group-title="conv-production",ALL TV
-https://conv-production.up.railway.app/1179/manifest.mpd
+http://136.239.159.20:6610/001/2/ch00000090990000001179/manifest.mpd?AuthInfo=CfqQ6PIdhPzZ8SbJEgvnDgFvPJUZkFdpJ6EpngD6myW4sOMZV0PEGunP7MinMXP6JbNpK52PkkwZrw48jf7mig%3D%3D&version=v1.0&BreakPoint=0&virtualDomain=001.live_hls.zte.com&programid=ch00000000000000001415&contentid=ch00000000000000001415&videoid=ch00000090990000001179&recommendtype=0&userid=1878702116443&boid=001&stbid=02:00:00:00:00:00&terminalflag=1&profilecode=&usersessionid=1442189548&NeedJITP=1&JITPMediaType=DASH&JITPDRMType=Widevine&RateLow=1000000&RateHigh=2500000000000000000&IASHttpSessionId=OTT000020260121163235509744&ispcode=55
+
 #KODIPROP:inputstream.adaptive.manifest_type=mpd
 #KODIPROP:inputstream.adaptive.license_type=org.w3.clearkey
 #KODIPROP:inputstream.adaptive.license_key=31363234353837393638333931313738:335a493259306157495a557356494b44
