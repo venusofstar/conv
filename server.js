@@ -110,7 +110,7 @@ app.get("/:channelId/*", async (req, res) => {
   const session = getSession(channelId);
 
   const authParams =
-    `JITPDRMType=NO` +
+    `JITPDRMType=Widevine` +
     `&virtualDomain=001.live_hls.zte.com` +
     `&m4s_min=1` +
     `&NeedJITP=1` +
